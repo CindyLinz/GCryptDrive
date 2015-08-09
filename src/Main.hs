@@ -29,8 +29,8 @@ data Opt = Opt
 
 optsConfig :: [OptDescr (Opt -> Opt)]
 optsConfig =
-  [ Option ['c'] ["create"] (ReqArg (\containerId opt -> opt {optCreate = Just $ T.pack containerId}) "GDrive folder id") "Create a new GCryptDrive volumn under the specified GDrive folder, and stored the entry point in the work directory"
-  , Option ['m'] ["mount"] (ReqArg (\mntPath opt -> opt {optMount = Just mntPath}) "mount point") "Mount a GCryptDrive volumn, which is specified in the work directory, to the mount point"
+  [ Option ['c'] ["create"] (ReqArg (\containerId opt -> opt {optCreate = Just $ T.pack containerId}) "GDrive folder id or link") "Create a new GCryptDrive volume under the specified GDrive folder, and stored the entry point in the work directory"
+  , Option ['m'] ["mount"] (ReqArg (\mntPath opt -> opt {optMount = Just mntPath}) "mount point") "Mount a GCryptDrive volume, which is specified in the work directory, to the mount point"
   , Option ['w'] ["work_dir"] (ReqArg (\workPath opt -> opt {optWork = Just workPath}) "local work directory") ""
   , Option ['d'] ["debug"] (NoArg (\opt -> opt {optDebug = True})) "debug mode"
   ]
@@ -38,6 +38,9 @@ optsConfig =
 data WrongArgumentsException = WrongArgumentsException String
   deriving (Show, Typeable)
 instance Exception WrongArgumentsException
+
+normalizeFileId :: FileId -> FileId
+normalizeFileId input = T.pack . reverse . takeWhile (/= '=') . reverse . T.unpack $ input
 
 main = catch go $ \(WrongArgumentsException msg) -> do
     putStrLn msg
@@ -57,8 +60,8 @@ main = catch go $ \(WrongArgumentsException msg) -> do
             fuseStart mntPath workDir optDebug
           _ -> case optCreate of
             Just containerId -> do
-              fuseCreate workDir containerId
-            _ -> throwM $ WrongArgumentsException "You must create a volumn or mount a volumn"
+              fuseCreate workDir (normalizeFileId containerId)
+            _ -> throwM $ WrongArgumentsException "You must create a volume or mount a volume"
 
 --   runGoogle_ $ do
 --     Just root <- getFile "1OnCAeMCnLwJ8knzQeQw8BgTuYjHXSXpIS1JJ6uGzzXk"
