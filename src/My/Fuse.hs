@@ -64,12 +64,11 @@ removeGoogleEntry token workDir fid = do
 createGoogleEntry :: IORef Token -> FilePath -> FileId -> T.Text -> EntryType -> IO Entry
 createGoogleEntry token workDir containerFid name ty = do
   putStrLn $ "createGoogleEntry " ++ T.unpack name ++ " " ++ show ty
-  now <- getCurrentTime
 
   res <- runGoogleWith token workDir $ do
     G.createFile G.FileData
       { fileTitle = "data"
-      , fileModified = now
+      , fileModified = Nothing
       , fileParents = [containerFid]
       , fileTrashed = False
       , fileSize = Nothing
@@ -130,10 +129,9 @@ fuseStart mountDir workDirRel isDebug = do
       let
         newFileData :: Maybe Int -> IO G.FileData
         newFileData mSize = do
-          now <- getCurrentTime
           return G.FileData
             { fileTitle = "data"
-            , fileModified = now
+            , fileModified = Nothing
             , fileParents = [containerFid]
             , fileTrashed = False
             , fileSize = mSize
