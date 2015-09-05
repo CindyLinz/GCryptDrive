@@ -34,7 +34,7 @@ data Uploader = Uploader
   , token :: IORef Token
   , uploadEnding :: TVar Bool
   , uploadQueue :: TVar [UploadJob]
-  , uploadMorking :: TVar (Maybe UploadJobProgress)
+  , uploadWorking :: TVar (Maybe UploadJobProgress)
   }
 
 data UploadJobProgress = UploadJobProgress Entry Int {- uploaded size -} deriving Show
@@ -67,11 +67,12 @@ uploadEntry Uploader{..} entry = do
   let uploadSize = cryptedSize cipher (fromIntegral (fileSize fstat))
   fileData <- newFileData (Just uploadSize)
   putStrLn $ "uploadEntry " ++ show entry ++ " from " ++ localPath ++ " FileData=" ++ show fileData
+  putStrLn ""
 
   let
     uploader from = sourceFile localPath $= encryptEntry entry =$= process 0 where
       process offset = do
-        liftIO $ putStrLn $ "  " ++ show offset ++ "/" ++ show uploadSize ++ " from " ++ show from
+        liftIO $ putStrLn $ "\ESC[A  " ++ show offset ++ "/" ++ show uploadSize ++ " from " ++ show from
         await >>= \case
           Nothing -> return ()
           Just chunk -> do
@@ -106,6 +107,7 @@ run uploader@Uploader{..} = go where
     readTVar uploadQueue >>= \case
       (job:jobs) -> do
         writeTVar uploadQueue jobs
+        writeTVar uploadWorking (Just (UploadJobProgress job 0))
         return (Just job)
       [] ->
         readTVar uploadEnding >>= \case
@@ -116,7 +118,10 @@ run uploader@Uploader{..} = go where
   doJob job = go where
     go = do
       isSuccess <- uploadEntry uploader job
-      unless isSuccess go
+      if isSuccess then
+        atomically $ writeTVar uploadWorking Nothing
+      else
+        go
 
 spawn :: FilePath -> FileId -> IORef Token -> IO Uploader
 spawn workDir containerFid token = do
@@ -132,7 +137,9 @@ done Uploader{..} = do
   atomically $ writeTVar uploadEnding True
   atomically $ do
     readTVar uploadQueue >>= \case
-      [] -> return ()
+      [] -> readTVar uploadWorking >>= \case
+        Nothing -> return ()
+        _ -> retry
       _ -> retry
 
 add :: Uploader -> UploadJob -> IO ()
