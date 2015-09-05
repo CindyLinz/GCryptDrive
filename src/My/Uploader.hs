@@ -17,11 +17,13 @@ import qualified Data.Text as T
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import System.Posix.Files
+import System.Posix.IO
 import qualified Data.HashMap.Strict as HM
 import Data.IORef
 import Data.Conduit
 import Data.Conduit.List hiding (head, map, take, mapM_, filter)
 import Data.Conduit.Binary hiding (head, take, mapM_)
+import Data.List (foldl')
 
 import My.Data
 import My.Crypt
@@ -72,6 +74,7 @@ uploadEntry Uploader{..} entry = do
   let
     uploader from = sourceFile localPath $= encryptEntry entry =$= process 0 where
       process offset = do
+        liftIO $ atomically $ modifyTVar' uploadWorking $ \(Just (UploadJobProgress entry _)) -> Just (UploadJobProgress entry offset)
         liftIO $ putStrLn $ "\ESC[A  " ++ show offset ++ "/" ++ show uploadSize ++ " from " ++ show from
         await >>= \case
           Nothing -> return ()
@@ -123,6 +126,24 @@ run uploader@Uploader{..} = go where
       else
         go
 
+report :: Uploader -> IO ()
+report uploader@Uploader{..} = go where
+  reportPath = workDir </> "stats"
+
+  --tryCreatePipe =
+  --  catch (createNamedPipe reportPath 0o644) (\(e :: SomeException) -> return ())
+
+  go = do
+    bracket
+      (openFd reportPath WriteOnly (Just 0o644) defaultFileFlags {append = True, trunc = True})
+      closeFd
+      $ \fd -> do
+        uploadHint <- stats uploader
+        _ <- fdWrite fd uploadHint
+        return ()
+    threadDelay 1000000
+    go
+
 spawn :: FilePath -> FileId -> IORef Token -> IO Uploader
 spawn workDir containerFid token = do
   uploader <- Uploader workDir containerFid token
@@ -130,6 +151,7 @@ spawn workDir containerFid token = do
     <*> newTVarIO []
     <*> newTVarIO Nothing
   _ <- forkIO (run uploader)
+  _ <- forkIO (report uploader)
   return uploader
 
 done :: Uploader -> IO ()
@@ -149,4 +171,23 @@ add Uploader{..} job = do
       filter (\e -> entryId e /= entryId job) queue ++ [job]
 
 stats :: Uploader -> IO String
-stats uploader = undefined
+stats Uploader{..} = do
+  atomically $ do
+    queue <- readTVar uploadQueue
+    working <- readTVar uploadWorking
+
+    let
+      workingHint = case working of
+        Nothing ->
+          ""
+        Just (UploadJobProgress Entry{..} done) ->
+          "uploading " ++ T.unpack entryName ++ " -> " ++ T.unpack entryId ++ " " ++ show done ++ "/" ++ show entrySize ++ "\n"
+
+      pendingSize = foldl' (\acc Entry{..} -> acc + entrySize) 0 queue
+      pendingHint = case queue of
+        [] -> ""
+        _ -> show (length queue) ++ " files pending (" ++ show pendingSize ++ " bytes)\n"
+
+    case working of
+      Nothing | null queue -> return "idle.\n"
+      _ -> return $ workingHint ++ pendingHint
