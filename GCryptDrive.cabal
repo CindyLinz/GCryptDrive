@@ -71,6 +71,7 @@ executable GCryptDrive
                      , PackageImports
                      , StandaloneDeriving
                      , ViewPatterns
+                     , RecursiveDo
   
   -- Other library packages from which modules are imported.
   build-depends:       base >=4.7 && <4.8
@@ -93,6 +94,7 @@ executable GCryptDrive
                      , directory ==1.2.2.*
                      , unordered-containers ==0.2.*
                      , unix-bytestring ==0.3.*
+                     , stm ==2.4.*
   
   -- Directories containing source files.
   hs-source-dirs:      src

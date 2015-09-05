@@ -8,6 +8,7 @@ import My.Data
 import My.Serialize
 import My.Crypt
 import My.Exception
+import qualified My.Uploader as U
 
 import Data.IORef
 import Control.Applicative
@@ -126,20 +127,9 @@ fuseStart mountDir workDirRel isDebug = do
       pathIndex <- H.new :: IO (HashTable FilePath Entry)
       H.insert pathIndex "/" rootEntry
 
-      let
-        newFileData :: Maybe Int -> IO G.FileData
-        newFileData mSize = do
-          return G.FileData
-            { fileTitle = "data"
-            , fileModified = Nothing
-            , fileParents = [containerFid]
-            , fileTrashed = False
-            , fileSize = mSize
-            , fileDownloadUrl = Nothing
-            , fileMimeType = "application/octet-stream"
-            , fileExportLinks = HM.empty
-            }
+      uploader <- U.spawn workDir containerFid token
 
+      let
         updateDir :: FilePath -> (Maybe Entry -> ConduitM Entry Entry (ResourceT IO) [Entry]) -> IO ()
         updateDir path modifyEntry = do
           locate path >>= \case
@@ -155,43 +145,6 @@ fuseStart mountDir workDirRel isDebug = do
                     Just _ -> process
                     Nothing -> return ()
               runResourceT $ source $$ process =$ sink
-
-        uploadEntry :: Entry -> IO ()
-        uploadEntry entry = do
-          let
-            fid = entryId entry
-            localPath = workDir </> T.unpack fid
-
-          CipherOne cipher <- chooseCipher (entryVer entry)
-
-          fstat <- getFileStatus localPath
-          let uploadSize = cryptedSize cipher (fromIntegral (fileSize fstat))
-          fileData <- newFileData (Just uploadSize)
-          putStrLn $ "uploadEntry " ++ show entry ++ " from " ++ localPath ++ " FileData=" ++ show fileData
-
-          let
-            uploader from = sourceFile localPath $= encryptEntry entry =$= process 0 where
-              process offset = do
-                liftIO $ putStrLn $ "  " ++ show offset ++ "/" ++ show uploadSize ++ " from " ++ show from
-                await >>= \case
-                  Nothing -> return ()
-                  Just chunk -> do
-                    if offset >= from then do
-                      yield chunk
-                    else if offset + B.length chunk > from then
-                      yield (B.drop (offset + B.length chunk - from) chunk)
-                    else
-                      return ()
-                    process (offset + B.length chunk)
-
-          res <- runGoogleWith token workDir $ do
-            G.updateFileWithContent fid fileData uploadSize uploader
-
-          case res of
-            Right _ -> do
-              tryRemoveLink (localPath <.> "dirty")
-              return ()
-            _ -> throwM eBUSY
 
         downloadEntry :: Entry -> IO ()
         downloadEntry entry = do
@@ -258,7 +211,7 @@ fuseStart mountDir workDirRel isDebug = do
             after True = liftIO $ do
               tryRemoveLink localPath
               rename localEditPath localPath
-              uploadEntry entry
+              U.add uploader entry
             after False = liftIO $ tryRemoveLink localEditPath >> return ()
 
           return (encodeDir entry =$= addCleanup after (sinkFile localEditPath))
@@ -303,7 +256,9 @@ fuseStart mountDir workDirRel isDebug = do
         fuseOps = defaultFuseOps
           { fuseInit = putStrLn "fuseInit"
 
-          , fuseDestroy = putStrLn "fuseDestroy"
+          , fuseDestroy = do
+            putStrLn "fuseDestroy"
+            U.done uploader
 
           , fuseCreateDevice = \path ty mode devId -> catchPosix_ $ do
             putStrLn $ "fuseCreateDevice " ++ path ++ " " ++ show ty ++ " " ++ show mode ++ " " ++ show devId
@@ -364,7 +319,7 @@ fuseStart mountDir workDirRel isDebug = do
                 setFileSize (workDir </> T.unpack fid) size
                 let entry' = entry { entrySize = size }
                 H.insert pathIndex path entry'
-                uploadEntry entry'
+                U.add uploader entry'
 
                 updateDir (takeDirectory path) $ \case
                   Nothing -> return []
@@ -418,7 +373,7 @@ fuseStart mountDir workDirRel isDebug = do
                 now <- epochTime
                 let entry' = entry { entrySize = fileSize fstat, entryMTime = now }
                 H.insert pathIndex path entry'
-                uploadEntry entry'
+                U.add uploader entry'
 
                 updateDir (takeDirectory path) $ \case
                   Nothing -> return []
