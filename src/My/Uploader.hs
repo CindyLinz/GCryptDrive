@@ -24,6 +24,7 @@ import Data.Conduit
 import Data.Conduit.List hiding (head, map, take, mapM_, filter)
 import Data.Conduit.Binary hiding (head, take, mapM_)
 import Data.List (foldl')
+import Data.Time.Clock
 
 import My.Data
 import My.Crypt
@@ -71,11 +72,19 @@ uploadEntry Uploader{..} entry = do
   putStrLn $ "uploadEntry " ++ show entry ++ " from " ++ localPath ++ " FileData=" ++ show fileData
   putStrLn ""
 
+  lastUpdateRef <- newIORef =<< getCurrentTime
+
   let
     uploader from = sourceFile localPath $= encryptEntry entry =$= process 0 where
       process offset = do
         liftIO $ atomically $ modifyTVar' uploadWorking $ \(Just (UploadJobProgress entry _)) -> Just (UploadJobProgress entry offset)
-        liftIO $ putStrLn $ "\ESC[A  " ++ show offset ++ "/" ++ show uploadSize ++ " from " ++ show from
+        liftIO $ do
+          lastUpdate <- readIORef lastUpdateRef
+          now <- getCurrentTime
+          when (diffUTCTime now lastUpdate > 1) $ do
+            putStrLn $ "\ESC[A  " ++ show offset ++ "/" ++ show uploadSize ++ " from " ++ show from
+            writeIORef lastUpdateRef now
+
         await >>= \case
           Nothing -> return ()
           Just chunk -> do
