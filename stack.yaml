@@ -1,0 +1,10 @@
+flags: {}
+extra-package-dbs: []
+packages:
+- '.'
+extra-deps:
+- HFuse-0.2.4.5
+- google-drive-0.4.1
+- google-oauth2-0.2.0
+- unix-bytestring-0.3.7.3
+resolver: lts-3.20
