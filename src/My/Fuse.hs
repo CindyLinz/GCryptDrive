@@ -188,11 +188,20 @@ fuseStart mountDir workDirRel isDebug = do
             Directory -> return ()
             _ -> throwM eNOTDIR
 
-          res <- makeSureEntry entry
-          let
-            fid = entryId entry
-            localPath = workDir </> T.unpack fid
-          return $ sourceFile localPath $= decodeDir entry
+          catch
+            ( do
+              res <- makeSureEntry entry
+              let
+                fid = entryId entry
+                localPath = workDir </> T.unpack fid
+              return $ sourceFile localPath $= decodeDir entry
+            )
+            ( \e ->
+              if isDoesNotExistError e then
+                return $ sourceList []
+              else
+                throwM e
+            )
 
         dirSink :: (MonadIO m, MonadResource m, MonadThrow m) => Entry -> IO (Sink Entry m ())
         dirSink entry = do
@@ -248,6 +257,7 @@ fuseStart mountDir workDirRel isDebug = do
                           Nothing -> return Nothing
                           Just entry -> do
                             if entryName entry == fileName then do
+                              liftIO $ putStrLn $ "locate " ++ path ++ " done."
                               return (Just entry)
                             else
                               go
@@ -494,6 +504,7 @@ fuseStart mountDir workDirRel isDebug = do
                   await >>= \case
                     Nothing -> return True
                     Just _ -> return False
+                putStrLn $ "isEmpty = " ++ show isEmpty
                 case isEmpty of
                   False -> throwM eNOTEMPTY
                   True -> do
